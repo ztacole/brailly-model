@@ -27,6 +27,8 @@ python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Model siap pakai tersedia di `models/brailly.onnx` (12 MB, tanpa perlu PyTorch saat inferensi).
+
 ## Pemakaian
 
 ```bash
@@ -104,20 +106,34 @@ Set validasi (43 foto buku + 6 tulisan tangan):
 | Model | det F1 | sym F1 | braille CER |
 |---|---|---|---|
 | Sintetis saja (tanpa satu pun foto asli) | 0.880 | 0.775 | 0.415 |
-| Setelah fine-tune foto asli | **0.997** | **0.981** | **0.022** |
+| Setelah fine-tune foto asli | **0.997** | **0.987** | **0.017** |
 
-Set uji `uploaded` (50 foto acak dari pengguna layanan Braille — berisi foto apa adanya,
-termasuk yang gelap, miring, dan terpotong):
+Set uji `uploaded` — 50 foto acak dari pengguna layanan Braille, **tidak dipakai saat latih**.
+Isinya foto apa adanya: gelap, miring, terpotong, berlatar ramai:
 
 | Model | det F1 | sym F1 | braille CER |
 |---|---|---|---|
 | Sintetis saja | 0.939 | 0.879 | 0.179 |
+| Setelah fine-tune foto asli | **0.968** | **0.938** | **0.088** |
 
-Kecepatan ±0,5 detik per foto (CPU 5 utas, sisi panjang 1024 px).
+Kecepatan ±0,4 detik per foto (CPU 5 utas, sisi panjang 1024 px).
 
 Angka "sintetis saja" penting untuk kasus Anda: model yang **belum pernah melihat satu pun
 foto asli** sudah mencapai sym F1 0.88. Artinya, bila nanti Anda punya foto buku Braille
 Indonesia, generator sintetis bisa disetel ke format tersebut tanpa perlu banyak data berlabel.
+
+### Uji ujung-ke-ujung bahasa Indonesia
+
+Karena foto berlabel yang tersedia berbahasa Rusia, rantai lengkap diuji dengan halaman
+Braille berisi teks Indonesia yang sudah diketahui, dirender menyerupai foto (pencahayaan
+timbul, kemiringan, derau, kompresi JPEG):
+
+```bash
+python scripts/demo_roundtrip.py --model models/brailly.onnx
+```
+
+Hasilnya 10/10 baris tepat, CER 0.0000, dan keempat paragraf terkelompok benar — termasuk
+angka (`17`, `1945`), tanda tanya, titik, dan koma.
 
 ## Melatih ulang
 
@@ -186,8 +202,15 @@ brailly/
   preprocess.py   deteksi & perataan lembar kertas
   pipeline.py     BraillyReader (alur lengkap, backend PyTorch/ONNX)
   metrics.py      pencocokan sel & jarak edit
-scripts/          train.py, evaluate.py, infer.py, export_onnx.py, serve.py
-tests/            uji konversi, tata letak, dan alur target->teks
+scripts/
+  train.py          latih (sintetis dan/atau foto asli), dapat dilanjutkan
+  evaluate.py       hitung det/sym F1 dan CER
+  infer.py          baca satu foto dari CLI
+  demo_roundtrip.py uji ujung-ke-ujung dengan teks Indonesia
+  export_onnx.py    ekspor ke ONNX + verifikasi numerik
+  serve.py          API HTTP
+models/brailly.onnx model terlatih siap pakai
+tests/              uji konversi, tata letak, dan alur target->teks
 ```
 
 ## Rujukan
