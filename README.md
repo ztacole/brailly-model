@@ -13,7 +13,7 @@ foto kamera ──► BraillyNet (deteksi sel + 6 titik) ──► tata letak �
 
 | Komponen | Status |
 |---|---|
-| Konversi Braille ↔ Latin (Braille Indonesia tingkat 1) | selesai, teruji |
+| Konversi Braille ↔ Latin (Braille Indonesia tingkat 1) | selesai, 10 test lulus |
 | Generator data sintetis | selesai |
 | Model deteksi (BraillyNet) | terlatih (16 epoch sintetis + fine-tune foto asli) |
 | Rekonstruksi baris/paragraf | selesai, teruji |
@@ -164,9 +164,23 @@ diperlakukan sebagai contoh negatif (foto bukan Braille), berguna untuk menekan 
 tanda kapital (titik 6; digandakan untuk kata berhuruf kapital semua), tanda angka (titik 3456),
 tanda huruf (titik 56), dan tanda baca.
 
-Beberapa pola dipakai ganda — tanda kutip buka dan tanda tanya memakai titik 236, kurung buka
-dan tutup memakai titik 2356 — sehingga dibedakan dari posisinya dalam kata. Tabelnya dapat
-disesuaikan lewat `BrailleProfile` bila buku sumber Anda memakai konvensi berbeda:
+Tabel tanda bacanya sudah diverifikasi cocok dengan **standar Braille internasional**
+(lihat [artikel Braille, bagian Punctuation](https://en.wikipedia.org/wiki/Braille)), dan
+dikunci oleh `tests/test_braille.py`:
+
+| Tanda | Titik | Tanda | Titik |
+|---|---|---|---|
+| koma `,` | 2 | tanda seru `!` | 235 |
+| titik koma `;` | 23 | tanda tanya `?` | 236 |
+| titik dua `:` | 25 | kutip buka `"` | 236 |
+| titik `.` | 256 | kutip tutup `"` | 356 |
+| apostrof `'` | 3 | kurung `(` `)` | 2356 |
+| tanda hubung `-` | 36 | garis miring `/` | 34 |
+
+Beberapa pola dipakai ganda — tanda kutip buka dan tanda tanya sama-sama titik 236, kurung
+buka dan tutup sama-sama titik 2356 — sehingga dibedakan dari posisinya dalam kata, sesuai
+aturan standar tersebut. Tabelnya dapat disesuaikan lewat `BrailleProfile` bila buku sumber
+Anda memakai konvensi berbeda:
 
 ```python
 from brailly.braille import BrailleCodec, BrailleProfile
@@ -179,9 +193,11 @@ codec = BrailleCodec(profil)
 1. **Belum diuji pada Braille berbahasa Indonesia.** Foto uji berisi teks Rusia, jadi angka di
    atas mengukur ketepatan membaca *titik*, bukan hasil terjemahan bahasa Indonesia. Kode titik
    Braille bersifat universal, tetapi tabel tanda bacanya perlu diverifikasi.
-2. **Tabel tanda baca perlu diverifikasi** terhadap dokumen resmi Sistem Simbol Braille
-   Indonesia (khususnya kutip, kurung, titik dua, dan pemisah desimal/ribuan). Tabel saat ini
-   disusun dari konvensi umum, bukan dari dokumen resmi.
+2. **Tabel tanda baca** sudah dicocokkan dengan standar Braille internasional dan dikunci
+   oleh test, tetapi **belum** dibandingkan dengan dokumen resmi Sistem Simbol Braille
+   Indonesia (dokumen tersebut tidak tersedia daring saat pengerjaan). Bila ternyata ada
+   simbol khas Indonesia yang berbeda, sesuaikan lewat `BrailleProfile` — tidak perlu
+   melatih ulang model, karena model hanya mengenali titik, bukan maknanya.
 3. Hanya mendukung **Braille tingkat 1 (tanpa singkatan)** dan sel 6 titik.
 4. Halaman diasumsikan tegak; gunakan `--rotate-180` untuk halaman terbalik. Rotasi 90° belum didukung.
 5. Dataset Angelina **tidak mencantumkan lisensi**. Periksa izin pemakaiannya sebelum dipakai

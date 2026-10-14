@@ -66,3 +66,49 @@ def test_layout_rotated():
         c.cx, c.cy = c.cx * math.cos(a) - c.cy * math.sin(a), c.cx * math.sin(a) + c.cy * math.cos(a)
     lay = build_layout(cells, codec)
     assert [l.text for l in lay.lines] == ["satu dua tiga empat lima", "enam tujuh delapan"]
+
+
+def test_punctuation_matches_international_standard():
+    """Tanda baca mengikuti standar Braille internasional.
+
+    Deret tanda baca diturunkan dari a-j yang digeser satu baris ke bawah
+    (⠂⠆⠒⠲⠢⠖⠶⠦⠔⠴), sedangkan apostrof dan tanda hubung digeser dua posisi
+    (⠄⠤). Rujukan: artikel "Braille" di Wikipedia, bagian Punctuation.
+    https://en.wikipedia.org/wiki/Braille
+    """
+    standar = {
+        ",": "2",      # koma
+        ";": "23",     # titik koma
+        ":": "25",     # titik dua
+        ".": "256",    # titik
+        "!": "235",    # tanda seru
+        "?": "236",    # tanda tanya (sama dengan kutip buka)
+        "(": "2356",   # kurung (buka dan tutup memakai pola sama)
+        ")": "2356",
+        "'": "3",      # apostrof
+        "-": "36",     # tanda hubung
+        "/": "34",     # garis miring
+        "\u201c": "236",   # kutip buka
+        "\u201d": "356",   # kutip tutup
+    }
+    for ch, dots in standar.items():
+        assert codec.p.punctuation[ch] == dots, f"{ch}: {codec.p.punctuation[ch]} != {dots}"
+    assert codec.p.capital == "6"      # tanda kapital
+    assert codec.p.number == "3456"    # tanda angka
+
+
+def test_shared_patterns_disambiguated_by_position():
+    """⠦ dan ⠶ dipakai ganda; artinya ditentukan posisinya dalam kata."""
+    assert codec.decode(codec.encode("Benar?")) == "Benar?"
+    assert codec.decode(codec.encode("\u201cbenar\u201d")) == "\u201cbenar\u201d"
+    assert codec.decode(codec.encode("(benar)")) == "(benar)"
+
+
+def test_number_mode_and_letter_sign():
+    # tanda angka aktif sampai tanda huruf atau spasi
+    assert codec.decode(codec.encode("tahun 1945")) == "tahun 1945"
+    assert codec.decode(codec.encode("12.500")) == "12.500"      # pemisah ribuan
+    assert codec.decode(codec.encode("2,5")) == "2,5"            # desimal
+    assert codec.decode(codec.encode("kelas 3a")) == "kelas 3a"  # angka diikuti huruf
+    # titik di akhir angka adalah tanda baca, bukan pemisah ribuan
+    assert codec.decode(codec.encode("ada 89.")) == "ada 89."
