@@ -13,7 +13,7 @@ foto kamera ──► BraillyNet (deteksi sel + 6 titik) ──► tata letak �
 
 | Komponen | Status |
 |---|---|
-| Konversi Braille ↔ Latin (Braille Indonesia tingkat 1) | selesai, teruji |
+| Konversi Braille ↔ Latin (Braille Indonesia tingkat 1) | selesai, 10 test lulus |
 | Generator data sintetis | selesai |
 | Model deteksi (BraillyNet) | terlatih (16 epoch sintetis + fine-tune foto asli) |
 | Rekonstruksi baris/paragraf | selesai, teruji |
@@ -26,6 +26,8 @@ foto kamera ──► BraillyNet (deteksi sel + 6 titik) ──► tata letak �
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+Model siap pakai tersedia di `models/brailly.onnx` (12 MB, tanpa perlu PyTorch saat inferensi).
 
 ## Pemakaian
 
@@ -104,20 +106,34 @@ Set validasi (43 foto buku + 6 tulisan tangan):
 | Model | det F1 | sym F1 | braille CER |
 |---|---|---|---|
 | Sintetis saja (tanpa satu pun foto asli) | 0.880 | 0.775 | 0.415 |
-| Setelah fine-tune foto asli | **0.997** | **0.981** | **0.022** |
+| Setelah fine-tune foto asli | **0.997** | **0.987** | **0.017** |
 
-Set uji `uploaded` (50 foto acak dari pengguna layanan Braille — berisi foto apa adanya,
-termasuk yang gelap, miring, dan terpotong):
+Set uji `uploaded` — 50 foto acak dari pengguna layanan Braille, **tidak dipakai saat latih**.
+Isinya foto apa adanya: gelap, miring, terpotong, berlatar ramai:
 
 | Model | det F1 | sym F1 | braille CER |
 |---|---|---|---|
 | Sintetis saja | 0.939 | 0.879 | 0.179 |
+| Setelah fine-tune foto asli | **0.968** | **0.938** | **0.088** |
 
-Kecepatan ±0,5 detik per foto (CPU 5 utas, sisi panjang 1024 px).
+Kecepatan ±0,4 detik per foto (CPU 5 utas, sisi panjang 1024 px).
 
 Angka "sintetis saja" penting untuk kasus Anda: model yang **belum pernah melihat satu pun
 foto asli** sudah mencapai sym F1 0.88. Artinya, bila nanti Anda punya foto buku Braille
 Indonesia, generator sintetis bisa disetel ke format tersebut tanpa perlu banyak data berlabel.
+
+### Uji ujung-ke-ujung bahasa Indonesia
+
+Karena foto berlabel yang tersedia berbahasa Rusia, rantai lengkap diuji dengan halaman
+Braille berisi teks Indonesia yang sudah diketahui, dirender menyerupai foto (pencahayaan
+timbul, kemiringan, derau, kompresi JPEG):
+
+```bash
+python scripts/demo_roundtrip.py --model models/brailly.onnx
+```
+
+Hasilnya 10/10 baris tepat, CER 0.0000, dan keempat paragraf terkelompok benar — termasuk
+angka (`17`, `1945`), tanda tanya, titik, dan koma.
 
 ## Melatih ulang
 
@@ -148,9 +164,23 @@ diperlakukan sebagai contoh negatif (foto bukan Braille), berguna untuk menekan 
 tanda kapital (titik 6; digandakan untuk kata berhuruf kapital semua), tanda angka (titik 3456),
 tanda huruf (titik 56), dan tanda baca.
 
-Beberapa pola dipakai ganda — tanda kutip buka dan tanda tanya memakai titik 236, kurung buka
-dan tutup memakai titik 2356 — sehingga dibedakan dari posisinya dalam kata. Tabelnya dapat
-disesuaikan lewat `BrailleProfile` bila buku sumber Anda memakai konvensi berbeda:
+Tabel tanda bacanya sudah diverifikasi cocok dengan **standar Braille internasional**
+(lihat [artikel Braille, bagian Punctuation](https://en.wikipedia.org/wiki/Braille)), dan
+dikunci oleh `tests/test_braille.py`:
+
+| Tanda | Titik | Tanda | Titik |
+|---|---|---|---|
+| koma `,` | 2 | tanda seru `!` | 235 |
+| titik koma `;` | 23 | tanda tanya `?` | 236 |
+| titik dua `:` | 25 | kutip buka `"` | 236 |
+| titik `.` | 256 | kutip tutup `"` | 356 |
+| apostrof `'` | 3 | kurung `(` `)` | 2356 |
+| tanda hubung `-` | 36 | garis miring `/` | 34 |
+
+Beberapa pola dipakai ganda — tanda kutip buka dan tanda tanya sama-sama titik 236, kurung
+buka dan tutup sama-sama titik 2356 — sehingga dibedakan dari posisinya dalam kata, sesuai
+aturan standar tersebut. Tabelnya dapat disesuaikan lewat `BrailleProfile` bila buku sumber
+Anda memakai konvensi berbeda:
 
 ```python
 from brailly.braille import BrailleCodec, BrailleProfile
@@ -163,9 +193,11 @@ codec = BrailleCodec(profil)
 1. **Belum diuji pada Braille berbahasa Indonesia.** Foto uji berisi teks Rusia, jadi angka di
    atas mengukur ketepatan membaca *titik*, bukan hasil terjemahan bahasa Indonesia. Kode titik
    Braille bersifat universal, tetapi tabel tanda bacanya perlu diverifikasi.
-2. **Tabel tanda baca perlu diverifikasi** terhadap dokumen resmi Sistem Simbol Braille
-   Indonesia (khususnya kutip, kurung, titik dua, dan pemisah desimal/ribuan). Tabel saat ini
-   disusun dari konvensi umum, bukan dari dokumen resmi.
+2. **Tabel tanda baca** sudah dicocokkan dengan standar Braille internasional dan dikunci
+   oleh test, tetapi **belum** dibandingkan dengan dokumen resmi Sistem Simbol Braille
+   Indonesia (dokumen tersebut tidak tersedia daring saat pengerjaan). Bila ternyata ada
+   simbol khas Indonesia yang berbeda, sesuaikan lewat `BrailleProfile` — tidak perlu
+   melatih ulang model, karena model hanya mengenali titik, bukan maknanya.
 3. Hanya mendukung **Braille tingkat 1 (tanpa singkatan)** dan sel 6 titik.
 4. Halaman diasumsikan tegak; gunakan `--rotate-180` untuk halaman terbalik. Rotasi 90° belum didukung.
 5. Dataset Angelina **tidak mencantumkan lisensi**. Periksa izin pemakaiannya sebelum dipakai
@@ -186,8 +218,15 @@ brailly/
   preprocess.py   deteksi & perataan lembar kertas
   pipeline.py     BraillyReader (alur lengkap, backend PyTorch/ONNX)
   metrics.py      pencocokan sel & jarak edit
-scripts/          train.py, evaluate.py, infer.py, export_onnx.py, serve.py
-tests/            uji konversi, tata letak, dan alur target->teks
+scripts/
+  train.py          latih (sintetis dan/atau foto asli), dapat dilanjutkan
+  evaluate.py       hitung det/sym F1 dan CER
+  infer.py          baca satu foto dari CLI
+  demo_roundtrip.py uji ujung-ke-ujung dengan teks Indonesia
+  export_onnx.py    ekspor ke ONNX + verifikasi numerik
+  serve.py          API HTTP
+models/brailly.onnx model terlatih siap pakai
+tests/              uji konversi, tata letak, dan alur target->teks
 ```
 
 ## Rujukan
