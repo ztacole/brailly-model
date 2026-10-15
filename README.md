@@ -17,7 +17,7 @@ foto kamera ──► BraillyNet (deteksi sel + 6 titik) ──► tata letak �
 | Generator data sintetis | selesai |
 | Model deteksi (BraillyNet) | terlatih (16 epoch sintetis + fine-tune foto asli) |
 | Rekonstruksi baris/paragraf | selesai, teruji |
-| Ekspor ONNX, CLI, HTTP API | selesai |
+| Ekspor ONNX & TFLite, CLI, HTTP API | selesai |
 | Validasi pada Braille berbahasa Indonesia | **belum** (lihat [Keterbatasan](#keterbatasan)) |
 
 ## Instalasi
@@ -27,7 +27,8 @@ python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Model siap pakai tersedia di `models/brailly.onnx` (12 MB, tanpa perlu PyTorch saat inferensi).
+Model siap pakai: `models/brailly.onnx` (server/iOS/web) dan `models/brailly.tflite`
+(Android, 3,4 MB). Inferensi tidak memerlukan PyTorch.
 
 ## Pemakaian
 
@@ -135,6 +136,66 @@ python scripts/demo_roundtrip.py --model models/brailly.onnx
 Hasilnya 10/10 baris tepat, CER 0.0000, dan keempat paragraf terkelompok benar — termasuk
 angka (`17`, `1945`), tanda tanya, titik, dan koma.
 
+## ONNX atau TFLite untuk Android?
+
+Keduanya sudah diekspor dan **diukur pada 50 foto uji yang sama** lewat jalur
+pasca-pemrosesan yang sama, jadi perbedaannya murni dari model. Kolom "APK"
+adalah ukuran terkompresi: model + runtime arm64 (terukur dari AAR-nya —
+ONNX Runtime 12,9 MB, LiteRT 1,7 MB).
+
+| varian | APK | det F1 | sym F1 | CER | detik* |
+|---|---|---|---|---|---|
+| onnx-fp32 | 24,1 MB | 0.968 | **0.938** | **0.088** | 0,15 |
+| onnx-int8 | 15,2 MB | 0.965 | 0.935 | 0.092 | 0,45 |
+| tflite-fp32 | **13,0 MB** | 0.968 | 0.931 | 0.098 | 0,30 |
+| tflite-dyn-int8 | **4,5 MB** | 0.966 | 0.922 | 0.107 | 0,34 |
+| tflite-static-int16 | 4,6 MB | 0.959 | 0.921 | 0.110 | 5,4 |
+| tflite-static-int8 | 4,6 MB | 0.961 | 0.907 | 0.122 | 0,24 |
+
+\*Waktu diukur di CPU x86, **bukan** penunjuk kecepatan di ARM. int16 lambat di
+CPU karena dirancang untuk NPU.
+
+Dua temuan yang menentukan:
+
+**1. TFLite tidak kalah akurat dari ONNX.** Selisih fp32 (0.938 → 0.931) ternyata
+sama sekali bukan karena TFLite, melainkan karena **bentuk masukan tetap**. Saat
+ONNX dipaksa melewati jalur letterbox yang sama, hasilnya **identik**: sym F1
+0.9313, CER 0.0984 — angka yang sama persis dengan tflite-fp32. Jadi biaya 0,7
+poin itu adalah harga bentuk statis, yang justru dibutuhkan ponsel untuk
+delegate GPU/NPU.
+
+**2. Yang mahal adalah kuantisasi aktivasi, bukan bobot.** Mode `static-int8`
+turun 3,1 poin karena logit heatmap berjangkauan ±15 terpotong oleh skala int8.
+Mode `dynamic-int8` (bobot int8, aktivasi fp32) hanya turun 0,9 poin dengan
+ukuran APK nyaris sama — 4,5 MB.
+
+**Rekomendasi: `tflite-dyn-int8`.** Dibanding onnx-fp32, APK-nya **5× lebih
+kecil** (4,5 vs 24,1 MB) dengan biaya 1,6 poin sym F1. Untuk aplikasi
+aksesibilitas yang menyasar ponsel kelas bawah, pertukaran itu sepadan.
+Bila akurasi jadi prioritas utama dan 13 MB masih dapat diterima, `tflite-fp32`
+praktis setara ONNX.
+
+```bash
+python scripts/export_tflite.py --ckpt runs/ft/best.pt \
+    --out models/brailly.tflite --quant-mode dynamic-int8
+
+# bandingkan sendiri varian apa pun
+python scripts/bench_backends.py --list data/uploaded/test.txt \
+    --model onnx=models/brailly.onnx --model tflite=models/brailly.tflite
+```
+
+ONNX tetap dipertahankan karena dipakai `serve.py` (jalur server) dan berguna
+untuk iOS/web. `BraillyReader` menerima `.onnx`, `.tflite`, maupun `.pt` —
+backend-nya dipilih otomatis dari ekstensi berkas.
+
+Catatan: ekspor TFLite memerlukan `torch<2.14` sehingga bentrok dengan
+lingkungan latih. Pakai virtualenv terpisah:
+
+```bash
+python -m venv .venv-tflite && . .venv-tflite/bin/activate
+pip install "torch==2.13.*" litert-torch opencv-python-headless
+```
+
 ## Melatih ulang
 
 ```bash
@@ -224,8 +285,12 @@ scripts/
   infer.py          baca satu foto dari CLI
   demo_roundtrip.py uji ujung-ke-ujung dengan teks Indonesia
   export_onnx.py    ekspor ke ONNX + verifikasi numerik
+  export_tflite.py  ekspor ke TFLite/LiteRT (4 mode kuantisasi) + verifikasi
+  bench_backends.py bandingkan varian model: akurasi, ukuran, kecepatan
   serve.py          API HTTP
-models/brailly.onnx model terlatih siap pakai
+models/
+  brailly.onnx      model terlatih (server, iOS, web)
+  brailly.tflite    model terlatih (Android, dynamic-int8)
 tests/              uji konversi, tata letak, dan alur target->teks
 ```
 
