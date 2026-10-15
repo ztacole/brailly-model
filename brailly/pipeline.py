@@ -43,6 +43,8 @@ class _TorchBackend:
 
 
 class _OnnxBackend:
+    fixed_hw = None
+
     def __init__(self, path: str):
         import onnxruntime as ort
         self.sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
@@ -52,16 +54,64 @@ class _OnnxBackend:
         return self.sess.run(None, {self.name: x})[0]
 
 
+class _TFLiteBackend:
+    """Backend TFLite/LiteRT. Bentuk masukannya tetap, jadi gambar di-letterbox.
+
+    Keluaran int8 otomatis didekuantisasi memakai skala dan titik-nol dari model.
+    """
+
+    def __init__(self, path: str):
+        try:
+            from ai_edge_litert.interpreter import Interpreter
+        except ImportError:  # paket lama
+            from tensorflow.lite.python.interpreter import Interpreter
+        self.interp = Interpreter(model_path=path)
+        self.interp.allocate_tensors()
+        self.inp = self.interp.get_input_details()[0]
+        self.out = self.interp.get_output_details()[0]
+        _, _, h, w = self.inp["shape"]
+        self.fixed_hw = (int(h), int(w))
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        skala_in, nol_in = self.inp["quantization"]
+        if skala_in:  # masukan terkuantisasi (mis. mode int16): kuantisasi dulu
+            info = np.iinfo(self.inp["dtype"])
+            x = np.clip(np.round(x / skala_in + nol_in), info.min, info.max)
+        self.interp.set_tensor(self.inp["index"], x.astype(self.inp["dtype"]))
+        self.interp.invoke()
+        y = self.interp.get_tensor(self.out["index"]).astype(np.float32)
+        skala, nol = self.out["quantization"]
+        if skala:
+            y = (y - nol) * skala
+        return y
+
+
 class BraillyReader:
     def __init__(self, model_path: str, config: Optional[ReaderConfig] = None,
                  codec: Optional[BrailleCodec] = None):
         self.cfg = config or ReaderConfig()
         self.codec = codec or BrailleCodec()
-        self.backend = _OnnxBackend(model_path) if model_path.endswith(".onnx") else _TorchBackend(model_path)
+        if model_path.endswith(".onnx"):
+            self.backend = _OnnxBackend(model_path)
+        elif model_path.endswith(".tflite"):
+            self.backend = _TFLiteBackend(model_path)
+        else:
+            self.backend = _TorchBackend(model_path)
 
     # ------------------------------------------------------------------
     def detect(self, img_bgr: np.ndarray, scale: float) -> List[Cell]:
-        x = resize_pad(img_bgr, scale)
+        fixed = getattr(self.backend, "fixed_hw", None)
+        if fixed is None:
+            x = resize_pad(img_bgr, scale)
+        else:
+            # bentuk masukan tetap (TFLite): perkecil skala bila perlu agar
+            # seluruh gambar muat, lalu lapisi sisanya -- tanpa memotong isi
+            h, w = img_bgr.shape[:2]
+            scale = min(scale, fixed[0] / h, fixed[1] / w)
+            x = cv2.resize(img_bgr, None, fx=scale, fy=scale,
+                           interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
+            x = cv2.copyMakeBorder(x, 0, fixed[0] - x.shape[0], 0, fixed[1] - x.shape[1],
+                                   cv2.BORDER_REPLICATE)
         rgb = cv2.cvtColor(x, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         out = self.backend(np.ascontiguousarray(rgb.transpose(2, 0, 1)[None]))[0]
         return decode_output(out, self.cfg.score_thr, scale=1.0 / scale)
