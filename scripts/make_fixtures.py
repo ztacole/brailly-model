@@ -180,6 +180,10 @@ def main():
         "layout_cases.json": fixture_layout(paths, codec, args.layout_cases),
         "decoder_case.json": fixture_decoder(args.model),
         "preprocess_case.json": fixture_preprocess(),
+        "endtoend_case.json": fixture_endtoend(
+            args.model,
+            os.path.join(base, open(args.list, encoding="utf-8").readline().strip().replace("\\", "/")),
+        ),
     }
     for nama, isi in berkas.items():
         path = os.path.join(args.out, nama)
@@ -189,6 +193,79 @@ def main():
     n = len(berkas["layout_cases.json"]["kasus"])
     print(f"kasus layout: {n}, kasus codec: {len(KALIMAT)}, "
           f"sel pada kasus decoder: {len(berkas['decoder_case.json']['harapan'])}")
+
+
+def fixture_endtoend(model: str, path: str) -> dict:
+    """Satu foto nyata melewati seluruh rantai pada skala sebenarnya.
+
+    Tensor masukan dan keluaran model terlalu besar untuk disimpan utuh, jadi
+    yang dicatat adalah cuplikan nilai pada indeks tetap. Cuplikan tetap mampu
+    menjaring kekeliruan sistematis (seperti pergeseran jendela sampel), karena
+    kekeliruan semacam itu menggeser hampir seluruh nilai.
+    """
+    import cv2
+    import numpy as np
+
+    from brailly.layout import build_layout
+    from brailly.pipeline import BraillyReader, ReaderConfig
+    from brailly.postprocess import decode_output
+    from brailly.preprocess import resize_pad
+
+    TH, TW = 1024, 768
+    reader = BraillyReader(model, ReaderConfig())
+    img = cv2.imread(path, cv2.IMREAD_COLOR)
+    h, w = img.shape[:2]
+
+    skala = min(1024 / max(h, w), TH / h, TW / w)
+    kecil = cv2.resize(img, None, fx=skala, fy=skala, interpolation=cv2.INTER_AREA)
+    dilapisi = cv2.copyMakeBorder(kecil, 0, TH - kecil.shape[0], 0, TW - kecil.shape[1],
+                                  cv2.BORDER_REPLICATE)
+    rgb = cv2.cvtColor(dilapisi, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    tensor = np.ascontiguousarray(rgb.transpose(2, 0, 1))
+
+    keluaran = reader.backend(tensor[None])[0]
+    sel = decode_output(keluaran, 0.3, scale=1.0 / skala)
+    from brailly.pipeline import _size_consensus
+    sel = _size_consensus(sel)
+    lay = build_layout(sel, reader.codec)
+
+    rng = np.random.default_rng(99)
+    idx_in = np.sort(rng.choice(tensor.size, 3000, replace=False))
+    idx_out = np.sort(rng.choice(keluaran.size, 3000, replace=False))
+
+    # gambar dikirim diperkecil agar fixture tetap ringan; Kotlin memakai
+    # ukuran yang sama sehingga perbandingannya setara
+    argb = []
+    bgr_small = cv2.resize(img, (w // 4, h // 4), interpolation=cv2.INTER_AREA)
+    sh, sw = bgr_small.shape[:2]
+    for y in range(sh):
+        for x in range(sw):
+            b, g, r = (int(v) for v in bgr_small[y, x])
+            argb.append((0xFF << 24) | (r << 16) | (g << 8) | b)
+    skala2 = min(1024 / max(sh, sw), TH / sh, TW / sw)
+    kecil2 = cv2.resize(bgr_small, None, fx=skala2, fy=skala2, interpolation=cv2.INTER_AREA)
+    dilapisi2 = cv2.copyMakeBorder(kecil2, 0, TH - kecil2.shape[0], 0, TW - kecil2.shape[1],
+                                   cv2.BORDER_REPLICATE)
+    rgb2 = cv2.cvtColor(dilapisi2, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    tensor2 = np.ascontiguousarray(rgb2.transpose(2, 0, 1))
+    idx_in2 = np.sort(rng.choice(tensor2.size, 3000, replace=False))
+
+    return {
+        "catatan": "satu foto nyata, rantai penuh pada skala sebenarnya",
+        "nama": os.path.basename(path),
+        "lebar": sw, "tinggi": sh,
+        "target_tinggi": TH, "target_lebar": TW,
+        "skala": round(float(skala2), 8),
+        "piksel_argb": argb,
+        "tensor_indeks": [int(i) for i in idx_in2],
+        "tensor_nilai": [round(float(tensor2.ravel()[i]), 6) for i in idx_in2],
+        "keluaran_bentuk": list(keluaran.shape),
+        "keluaran_indeks": [int(i) for i in idx_out],
+        "keluaran_nilai": [round(float(keluaran.ravel()[i]), 5) for i in idx_out],
+        "sel_terdeteksi": len(sel),
+        "teks": lay.text,
+        "baris": [l.text for l in lay.lines],
+    }
 
 
 if __name__ == "__main__":
